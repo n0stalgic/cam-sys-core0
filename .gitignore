@@ -1,0 +1,19 @@
+# Build artifacts
+Debug/
+*.axf
+*.bin
+*.map
+*.ld
+*.o
+*.d
+*.swd
+
+# Eclipse/MCUXpresso generated files
+.metadata
+.settings/
+*.launch
+
+# Binary files
+*.bin
+*.hex
+*.elf
