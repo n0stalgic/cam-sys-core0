@@ -1,1 +1,1 @@
-../../common/sysdef.h
+../common/sysdef.h

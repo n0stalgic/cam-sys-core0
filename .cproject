@@ -146,7 +146,7 @@
 									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/${ProjName}/rpmsg-lite/rpmsg-lite/lib/include}&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/${ProjName}/rpmsg-lite/rpmsg-lite/lib/include/environment/freertos}&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/${ProjName}/rpmsg-lite/rpmsg-lite/lib/include/platform/imxrt1170}&quot;"/>
-									<listOptionValue builtIn="false" value="/home/chris/code/nxp/common"/>
+									<listOptionValue builtIn="false" value="${workspace_loc:/${ProjName}/common}"/>
 									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/${ProjName}/source}&quot;"/>
 								</option>
 								<option id="gnu.c.compiler.option.include.files.233808666" name="Include files (-include)" superClass="gnu.c.compiler.option.include.files" useByScannerDiscovery="false"/>

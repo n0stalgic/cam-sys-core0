@@ -1,1 +1,1 @@
-../../common/periph_mutex.h
+../common/periph_mutex.h

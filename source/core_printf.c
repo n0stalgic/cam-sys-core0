@@ -1,1 +1,1 @@
-../../common/core_printf.c
+../common/core_printf.c
