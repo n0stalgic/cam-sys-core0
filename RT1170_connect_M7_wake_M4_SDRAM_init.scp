@@ -1,0 +1,355 @@
+100  REM =======================================================================
+110  REM RT1170_connect_M7_wake_M4.scp
+120  REM
+130  REM Copyright 2020 NXP
+140  REM All rights reserved.
+150  REM =======================================================================
+160  PRINT "RT1170 Connect M7 and Wake M4 Script"
+170  REM =======================================================================
+180  REM Uncomment ProbeList for standalone script use (outside the stub)
+190  REM =======================================================================
+200  REM ProbeList
+210  p% = ProbeFirstFound
+220  REM ProbeOpenByIndex p%
+230  WireSwdConnect p%
+240  SelectProbeCore p% 0
+250  CMInitApDp this
+260  REM =======================================================================
+270  REM The M4 AP is not visible while the core is held in reset
+280  REM Prepare a spin code in RAM and wake up / reset the M4 to it
+290  REM This serves two purposes:
+300  REM   - enables the M4 AP, required for debug visibility
+310  REM   - prevents M4 code from interfering with flash programming on M7
+320  REM Rev B only needs releasing the M4 core, no spin code setup required
+330  REM =======================================================================
+340  v% = Peek32 This 0x40C84800
+350  IF v% & 0x00FFFFF0 != 0x1170A0 Then GOTO 490
+360  REM Prepare spin code
+370  GOSUB 900
+380  REM =======================================================================
+390  PRINT "Setting M4 clock"
+400  REM Set m4_clk_root to OSC_RC_400M / 2: CLOCK_ROOT1 = mux(2), div(1)
+410  Poke32 this 0x40CC0080 0x201
+420  PRINT "Resetting M4 core"
+430  REM Save current reset SRMR and prevent M4 SW reset affecting the system
+440  s% = Peek32 this 0x40C04004
+450  Poke32 this 0x40C04004 0x00000C00
+460  Poke32 this 0x40C04284 0x1
+470  Poke32 this 0x40C04004 s%
+480  REM =======================================================================
+490  REM Release M4 if needed
+500  s% = Peek32 this 0x40c04000
+510  IF s% & 1 == 1 THEN GOTO 560
+520  PRINT "Releasing M4"
+530  s% = s% | 1
+540  Poke32 this 0x40c04000 s%
+550  REM =======================================================================
+560  PRINT "View cores on the DAP AP"
+570  WireSwdConnect p%
+580  CoreList p%
+590  SelectProbeCore p% 0
+600  REM =======================================================================
+610  REM Potentially FlexRAM might need to be set to ensure TCMs are available
+620  REM Uncomment next line if needed
+630  REM GOSUB 700
+640  REM =======================================================================
+645  GOSUB 1140
+650  REM Finished - 0 to select the M7, 1 to select M4
+660  d% = 0
+670  END
+700  REM ====================== SUB: Configure FlexRAM ========================
+710  PRINT "Configuring FlexRAM for 256KB I-TCM, 256KB D-TCM, 0KB OCRAM"
+720  REM FlexRAM TCM_CTRL - force RAM clocking ON and set fast mode = b100
+730  Poke32 this 0x40028000 0x4
+740  REM IOMUXC_GPR17/18 FlexRAM 32KB banks allocation - I(b11), D(b10), OC(b01)
+750  Poke32 this 0x400E4044 0x0000AAFF
+760  Poke32 this 0x400E4048 0x0000AAFF
+770  REM IOMUXC_GPR16 Enable FLEXRAM_BANK_CFG in GPR16/17
+780  s% = Peek32 this 0x400E4040
+790  s% = s% | 4
+800  Poke32 this 0x400E4040 s%
+810  RETURN
+900  REM ==================== SUB: Set up M4 spin code ========================
+910  REM Setup some spin code into an area of D-TCM (0x2021FF00)
+920  REM Condensed vector table format taking up 2 words of memory:
+930  REM   - x00: SP (dummy), two back-to-back branch-to-self opcodes (b 0)
+940  REM   - x04: PC - points to address x00 (+1 Thumb)
+950  PRINT "Setting M4 spin code"
+960  Poke32 this 0x2021FF00 0xE7FEE7FE
+970  Poke32 this 0x2021FF04 0x2021FF01
+980  REM Set top/bottom 16 bits of RAM address into CM4 VTOR iomuxc_lpsr_GPR0/1
+990  Poke32 this 0x40C0C000 0xFF00
+1000 Poke32 this 0x40C0C004 0x2021
+1010 RETURN
+1110 REM InitSysPll2 ======================================================
+1120 REM     // ANADIG_PLL_PLL_528_CTRL    
+1140 s% = PEEK32 THIS 0x40C84240
+1145 Print "At first SYS_PLL2 0x40C84240=" ~s%
+1180 IF (s% & 0x800000) != 0x800000 Then GOTO 1300
+1200 REM // SysPll2 has been initialized
+1220 s% = s% & 0xBFFFFFFF               REM ~0x40000000
+1230 Print "SYS_PLL2 clear gate bit" ~s%
+1240 Poke32 this 0x40C84240 s%
+1260 Print "syspll2 has been initialized already"
+1280 GOTO 1700
+1300 s% = PEEK32 THIS 0x40C84270
+1320 s% = s% | 0x80808080
+1340 Poke32 this 0x40C84270 s%
+1360 s% = PEEK32 THIS 0x40C84240
+1380 s% = s% & 0xFF7FDFFF          REM ~0x802000
+1400 s% = s% | 0x40000000
+1420 Poke32 this 0x40C84240 s%
+1440 REM // ANADIG_PLL_PLL_528_MFN
+1460 Poke32 this 0x40C84280 0
+1480 REM  // ANADIG_PLL_PLL_528_MFI
+1500 Poke32 this 0x40C84290 22
+1520 REM // ANADIG_PLL_PLL_528_MFD
+1540 Poke32 this 0x40C842A0 0x0FFFFFFF
+1560 REM  // ANADIG_PLL_PLL_528_CTRL
+1580 Poke32 this 0x40C84240 0x40000008
+1600 WAIT 1
+1610 REM // ANADIG_PLL_PLL_528_CTRL
+1615 s% = PEEK32 THIS 0x40C84240
+1620 s% = s% | 0x800800;
+1625 Poke32 this 0x40C84240 s%
+1630 WAIT 1
+1635 s% = PEEK32 THIS 0x40C84240
+1640 s% = s% & 0xFFFFF7FF            REM ~0x800
+1645 Poke32 this 0x40C84240 s%
+1650 REPEAT
+1655 s% = PEEK32 THIS 0x40C84240
+1660 UNTIL s% & 0x20000000 != 0
+1665 s% = s% | 0x2000
+1670 Poke32 this 0x40C84240 s%
+1675 s% = s% & 0xBFFFFFFF                     REM (not 0x40000000)
+1680 Poke32 this 0x40C84240 s%
+1690 Print "After setting SYS_PLL2 0x40C84240=" ~s%
+1700 REM InitSysPll2Pfd1======================================
+1710 REM // ANADIG_PLL_PLL_528_PFD
+1720 s% = PEEK32 THIS 0x40C84270
+1725 Print "0x40C84270=" ~s%
+1730 REM if (((s% & 0x8000) != 0) || (((s% & 0x3F00) >> 8) != 16))
+1740 IF s% & 0x8000 != 0 Then GOTO 1750
+1745 IF s% & 0x3F00 >> 8) !== 16 Then GOTO 1750
+1744 GOTO 1910
+1750 v% = s% & 0x4000
+1755 s% = s% | 0x8000
+1760 Poke32 this 0x40C84270 s%
+1770 s% = PEEK32 THIS 0x40C84270
+1780 s% = s% & 0xFFFFC0FF                     REM ~0x3F00
+1790 s% = s% | 0x1000
+1800 Poke32 this 0x40C84270 s%
+1810 s% = PEEK32 THIS 0x40C84250
+1820 s% = s% xor 0x4
+1830 Poke32 this 0x40C84250 s%
+1840 s% = PEEK32 THIS 0x40C84270
+1850 s% = s% & 0xFFFF7FFF                             REM ~0x8000
+1860 Poke32 this 0x40C84270 s%
+1870 REPEAT
+1880 s% = PEEK32 THIS 0x40C84270
+1890 UNTIL s% & 0x4000 != v%
+1900 GOTO 2100
+1910 Print "syspll2 pfd1 has been initialized already"
+1920 s% = s% & 0xFFFF7FFF                            REM   ~0x8000
+1930 Poke32 this 0x40C84270 s%
+1940 REM  End of InitSysPll2Pfd1
+2100 REM // Set SEMC root clock. Use sys pll2 pfd1 divided by 3: 198Mhz
+2105 Poke32 this 0x40CC0200 0x00000602
+
+2110 REM Init SDRAM========================
+2120 Poke32 this 0x400E8010 0x00000000
+2130 Poke32 this 0x400E8014 0x00000000
+2140 Poke32 this 0x400E8018 0x00000000
+2150 Poke32 this 0x400E801C 0x00000000
+2160 Poke32 this 0x400E8020 0x00000000
+2170 Poke32 this 0x400E8024 0x00000000
+2180 Poke32 this 0x400E8028 0x00000000
+2190 Poke32 this 0x400E802C 0x00000000
+2210 Poke32 this 0x400E8030 0x00000000
+2220 Poke32 this 0x400E8034 0x00000000
+2230 Poke32 this 0x400E8038 0x00000000
+2240 Poke32 this 0x400E803C 0x00000000
+2250 Poke32 this 0x400E8040 0x00000000
+2260 Poke32 this 0x400E8044 0x00000000
+2270 Poke32 this 0x400E8048 0x00000000
+2280 Poke32 this 0x400E804C 0x00000000
+2290 Poke32 this 0x400E8050 0x00000000
+2300 Poke32 this 0x400E8054 0x00000000
+2310 Poke32 this 0x400E8058 0x00000000
+2320 Poke32 this 0x400E805C 0x00000000
+2330 Poke32 this 0x400E8060 0x00000000
+2340 Poke32 this 0x400E8064 0x00000000
+2350 Poke32 this 0x400E8068 0x00000000
+2360 Poke32 this 0x400E806C 0x00000000
+2370 Poke32 this 0x400E8070 0x00000000
+2380 Poke32 this 0x400E8074 0x00000000
+2390 Poke32 this 0x400E8078 0x00000000
+2400 Poke32 this 0x400E807C 0x00000000
+2410 Poke32 this 0x400E8080 0x00000000
+2420 Poke32 this 0x400E8084 0x00000000
+2430 Poke32 this 0x400E8088 0x00000000
+2440 Poke32 this 0x400E808C 0x00000000
+2450 Poke32 this 0x400E8090 0x00000000
+2460 Poke32 this 0x400E8094 0x00000000
+2470 Poke32 this 0x400E8098 0x00000000
+2480 Poke32 this 0x400E809C 0x00000000
+2490 Poke32 this 0x400E80A0 0x00000000
+2500 Poke32 this 0x400E80A4 0x00000000
+2510 Poke32 this 0x400E80A8 0x00000000
+
+2519 REM    EMC_39, DQS PIN, enable SION
+2520 Poke32 this 0x400E80AC 0x00000010
+2530 Poke32 this 0x400E80B0 0x00000000
+2540 Poke32 this 0x400E80B4 0x00000000
+2550 Poke32 this 0x400E80B8 0x00000000
+2560 Poke32 this 0x400E80BC 0x00000000
+2570 Poke32 this 0x400E80C0 0x00000000
+2580 Poke32 this 0x400E80C4 0x00000000
+2590 Poke32 this 0x400E80C8 0x00000000
+2600 Poke32 this 0x400E80CC 0x00000000
+2610 Poke32 this 0x400E80D0 0x00000000
+2620 Poke32 this 0x400E80D4 0x00000000
+2630 Poke32 this 0x400E80D8 0x00000000
+2640 Poke32 this 0x400E80DC 0x00000000
+2650 Poke32 this 0x400E80E0 0x00000000
+2660 Poke32 this 0x400E80E4 0x00000000
+2670 Poke32 this 0x400E80E8 0x00000000
+2680 Poke32 this 0x400E80EC 0x00000000
+2690 Poke32 this 0x400E80F0 0x00000000
+2700 Poke32 this 0x400E80F4 0x00000000
+2710 Poke32 this 0x400E80F8 0x00000000
+2720 Poke32 this 0x400E80FC 0x00000000
+2730 Poke32 this 0x400E8100 0x00000000
+2740 Poke32 this 0x400E8104 0x00000000
+2750 Poke32 this 0x400E8108 0x00000000
+2800 REM    PAD ctrl
+2810 REM    PDRV = 1b (normal); PULL = 10b (PD)
+2820 Poke32 this 0x400E8254 0x00000008
+2830 Poke32 this 0x400E8258 0x00000008
+2840 Poke32 this 0x400E825C 0x00000008
+2850 Poke32 this 0x400E8260 0x00000008
+2860 Poke32 this 0x400E8264 0x00000008
+2870 Poke32 this 0x400E8268 0x00000008
+2880 Poke32 this 0x400E826C 0x00000008
+2890 Poke32 this 0x400E8270 0x00000008
+2900 Poke32 this 0x400E8274 0x00000008
+2910 Poke32 this 0x400E8278 0x00000008
+2920 Poke32 this 0x400E827C 0x00000008
+2930 Poke32 this 0x400E8280 0x00000008
+2940 Poke32 this 0x400E8284 0x00000008
+2950 Poke32 this 0x400E8288 0x00000008
+2960 Poke32 this 0x400E828C 0x00000008
+2970 Poke32 this 0x400E8290 0x00000008
+2980 Poke32 this 0x400E8294 0x00000008
+2990 Poke32 this 0x400E8298 0x00000008
+3000 Poke32 this 0x400E829C 0x00000008
+3010 Poke32 this 0x400E82A0 0x00000008
+3020 Poke32 this 0x400E82A4 0x00000008
+3030 Poke32 this 0x400E82A8 0x00000008
+3040 Poke32 this 0x400E82AC 0x00000008
+3050 Poke32 this 0x400E82B0 0x00000008
+3060 Poke32 this 0x400E82B4 0x00000008
+3070 Poke32 this 0x400E82B8 0x00000008
+3080 Poke32 this 0x400E82BC 0x00000008
+3090 Poke32 this 0x400E82C0 0x00000008
+3110 Poke32 this 0x400E82C4 0x00000008
+3120 Poke32 this 0x400E82C8 0x00000008
+3130 Poke32 this 0x400E82CC 0x00000008
+3140 Poke32 this 0x400E82D0 0x00000008
+3150 Poke32 this 0x400E82D4 0x00000008
+3160 Poke32 this 0x400E82D8 0x00000008
+3170 Poke32 this 0x400E82DC 0x00000008
+3180 Poke32 this 0x400E82E0 0x00000008
+3190 Poke32 this 0x400E82E4 0x00000008
+3200 Poke32 this 0x400E82E8 0x00000008
+3210 Poke32 this 0x400E82EC 0x00000008
+3220 Poke32 this 0x400E82F0 0x00000008
+3230 Poke32 this 0x400E82F4 0x00000008
+3240 Poke32 this 0x400E82F8 0x00000008
+3250 Poke32 this 0x400E82FC 0x00000008
+3260 Poke32 this 0x400E8300 0x00000008
+3270 Poke32 this 0x400E8304 0x00000008
+3280 Poke32 this 0x400E8308 0x00000008
+3290 Poke32 this 0x400E830C 0x00000008
+3300 Poke32 this 0x400E8310 0x00000008
+3310 Poke32 this 0x400E8314 0x00000008
+3320 Poke32 this 0x400E8318 0x00000008
+3330 Poke32 this 0x400E831C 0x00000008
+3340 Poke32 this 0x400E8320 0x00000008
+3350 Poke32 this 0x400E8324 0x00000008
+3360 Poke32 this 0x400E8328 0x00000008
+3370 Poke32 this 0x400E832C 0x00000008
+3380 Poke32 this 0x400E8330 0x00000008
+3390 Poke32 this 0x400E8334 0x00000008
+3400 Poke32 this 0x400E8338 0x00000008
+3410 Poke32 this 0x400E833C 0x00000008
+3420 Poke32 this 0x400E8400 0x00000008
+3430 Poke32 this 0x400E8404 0x00000008
+3440 Poke32 this 0x400E8408 0x00000008
+3450 Poke32 this 0x400E840C 0x00000008
+3500 REM  Config SDR Controller Registers================
+3501 REM  MCR
+3510 Poke32 this 0x400d4000 0x10000004
+3515 REM   BMCR0
+3520 Poke32 this 0x400d4008 0x00000081
+3525 REM   BMCR1
+3530 Poke32 this 0x400d400C 0x00000081
+3535 REM   // BR0, 64MB
+3540 Poke32 this 0x400d4010 0x8000001D
+3545 REM  // SDRAMCR0, 32bit
+3550 Poke32 this 0x400d4040 0x00000F32
+3555 REM  SDRAMCR1
+3560 Poke32 this 0x400d4044 0x00772A22
+3565 REM  SDRAMCR2
+3570 Poke32 this 0x400d4048 0x00010A0D
+3575 REM   SDRAMCR3
+3580 Poke32 this 0x400d404C 0x21210408
+3585 REM   IPCR0
+3590 Poke32 this 0x400d4090 0x80000000
+3595 REM   IPCR1
+4000 Poke32 this 0x400d4094 0x00000002
+4005 REM   IPCR2
+4010 Poke32 this 0x400d4098 0x00000000
+4300 REM ======================================
+4310 REM  // IPCMD, SD_CC_IPREA
+4320 Poke32 this 0x400d409C 0xA55A000F
+4330 REM    // SDRAM_WaitIpCmdDone();
+4332 Print "SDRAM Ip cmd1"
+4335 REPEAT
+4340 m% = PEEK32 THIS 0x400D403C
+4350 UNTIL m% & 0x3 != 0
+4354 REM  // clear IPCMDERR and IPCMDDONE bits
+4355 Poke32 this 0x400D403C 0x00000003
+4356 Print "SDRAM Ip cmd2"
+4360 REM // SD_CC_IAF
+4370 Poke32 this 0x400d409C 0xA55A000C
+4380 REM  //    SDRAM_WaitIpCmdDone();
+4385 REPEAT
+4390 m% = PEEK32 THIS 0x400D403C
+4400 UNTIL m% & 0x3 != 0
+4405 Poke32 this 0x400D403C 0x00000003
+4410 REM   // SD_CC_IAF
+4420 Poke32 this 0x400d409C 0xA55A000C
+4430 REM    SDRAM_WaitIpCmdDone();
+4435 REPEAT
+4440 m% = PEEK32 THIS 0x400D403C
+4450 UNTIL m% & 0x3 != 0
+4455 Poke32 this 0x400D403C 0x00000003
+4460 REM    // IPTXDAT
+4470 Poke32 this 0x400d40A0 0x00000033
+4480 REM  // SD_CC_IMS
+4490 Poke32 this 0x400d409C 0xA55A000A)
+4500 REM    SDRAM_WaitIpCmdDone();
+4505 REPEAT
+4510 m% = PEEK32 THIS 0x400D403C
+4520 UNTIL m% & 0x3 != 0
+4525 Poke32 this 0x400D403C 0x00000003
+4530 REM  // DCCR
+4540 Poke32 this 0x400d4150 0x00000017
+4550 REM // enable sdram self refresh after initialization done.
+4560 Poke32 this 0x400d404C 0x21210409
+
+4700 Print "SDRAM init done"
+4710 RETURN
+4720 REM =======================================================================
+                                           

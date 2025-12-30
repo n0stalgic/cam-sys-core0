@@ -1,0 +1,1 @@
+../../common/rpmsg_addr_mem_cfg.h
